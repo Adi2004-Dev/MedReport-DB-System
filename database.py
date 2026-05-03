@@ -8,14 +8,14 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Base Tables
+    # Base Tables
     cursor.execute('''CREATE TABLE IF NOT EXISTS departments (dept_id INTEGER PRIMARY KEY AUTOINCREMENT, dept_name TEXT NOT NULL)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS doctors (doctor_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, dept_id INTEGER, FOREIGN KEY (dept_id) REFERENCES departments (dept_id))''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS patients (patient_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, dob TEXT, blood_group TEXT)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS reports (report_id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id INTEGER, doctor_id INTEGER, raw_text TEXT, upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (patient_id) REFERENCES patients (patient_id), FOREIGN KEY (doctor_id) REFERENCES doctors (doctor_id))''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS vitals (vital_id INTEGER PRIMARY KEY AUTOINCREMENT, report_id INTEGER, blood_pressure TEXT, heart_rate INTEGER, FOREIGN KEY (report_id) REFERENCES reports (report_id))''')
     
-    # 2. Advanced Feature: Audit Logs Table
+    # Audit Logs Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS audit_logs (
             log_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,8 +26,7 @@ def init_db():
         )
     ''')
     
-    # 3. Advanced Feature: Database Trigger
-    # This automatically writes to the audit_logs table whenever a report is inserted
+    # Database Trigger
     cursor.execute('''
         CREATE TRIGGER IF NOT EXISTS log_new_report 
         AFTER INSERT ON reports
@@ -37,8 +36,7 @@ def init_db():
         END;
     ''')
     
-    # 4. Advanced Feature: Database View
-    # This pre-compiles our complex JOIN so the frontend doesn't have to process it
+    # Database View
     cursor.execute('''
         CREATE VIEW IF NOT EXISTS patient_dashboard_view AS
         SELECT 
@@ -91,7 +89,7 @@ def get_doctor_data():
     return df
 
 def get_structured_history(patient_id):
-    """Now querying the SQL View instead of writing raw JOINs."""
+    """Queries the SQL View for the dashboard."""
     conn = sqlite3.connect(DB_NAME)
     query = f"SELECT upload_date, doctor, blood_pressure, heart_rate, raw_text FROM patient_dashboard_view WHERE patient_id = {patient_id} ORDER BY upload_date DESC"
     df = pd.read_sql_query(query, conn)

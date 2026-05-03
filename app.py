@@ -5,15 +5,22 @@ from PIL import Image
 import PyPDF2
 import re
 import spacy
+import spacy.cli
 import plotly.express as px
 import pandas as pd
 
-# Load the NLP Model
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    st.error("Missing NLP Model! Please run in your terminal: python -m spacy download en_core_web_sm")
-    nlp = None
+# --- BULLETPROOF MODEL LOADING ---
+@st.cache_resource
+def load_nlp_model():
+    try:
+        return spacy.load("en_core_web_sm")
+    except OSError:
+        st.info("System Initializing: Downloading AI Model... this will only take a moment.")
+        spacy.cli.download("en_core_web_sm")
+        return spacy.load("en_core_web_sm")
+
+nlp = load_nlp_model()
+# ---------------------------------
 
 # Initialize the database
 db.init_db()
@@ -38,11 +45,10 @@ if page == "Dashboard":
         if not history_df.empty:
             st.dataframe(history_df, use_container_width=True)
             
-            # --- Advanced Feature: Interactive Visualization ---
+            # Interactive Visualization
             st.markdown("---")
             st.subheader("📈 Heart Rate Trend")
             
-            # Format dataframe for plotting
             chart_df = history_df.copy()
             chart_df['upload_date'] = pd.to_datetime(chart_df['upload_date'])
             chart_df = chart_df.sort_values(by="upload_date")
@@ -127,7 +133,7 @@ elif page == "Upload New Report":
                 hr_match = re.search(r'(?i)(?:heart rate|pulse).*?(\d{2,3})\s*bpm', extracted_text)
                 hr_value = int(hr_match.group(1)) if hr_match else None
                 
-                # 3. Advanced Feature: Named Entity Recognition (Context)
+                # 3. Named Entity Recognition
                 diseases = []
                 medications = []
                 if nlp and extracted_text:
@@ -138,7 +144,6 @@ elif page == "Upload New Report":
                         elif ent.label_ in ["CHEMICAL", "PRODUCT"]:
                             medications.append(ent.text)
                 
-                # Deduplicate NER lists
                 diseases = list(set([d.title() for d in diseases]))
                 medications = list(set([m.title() for m in medications]))
 
@@ -147,7 +152,6 @@ elif page == "Upload New Report":
                 
             st.success(f"Report assigned to **{final_patient_name}** and digitized successfully!")
             
-            # Display Results visually
             col1, col2 = st.columns(2)
             with col1:
                 st.info(f"**Extracted Blood Pressure:** {bp_value}  \n**Extracted Heart Rate:** {hr_value} bpm")
