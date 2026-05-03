@@ -4,60 +4,55 @@ import pandas as pd
 DB_NAME = "medical_system_v2.db"
 
 def init_db():
-    """Initializes the relational database with linked tables."""
+    """Initializes the relational database with linked tables, views, and triggers."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Departments Table
+    # 1. Base Tables
+    cursor.execute('''CREATE TABLE IF NOT EXISTS departments (dept_id INTEGER PRIMARY KEY AUTOINCREMENT, dept_name TEXT NOT NULL)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS doctors (doctor_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, dept_id INTEGER, FOREIGN KEY (dept_id) REFERENCES departments (dept_id))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS patients (patient_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, dob TEXT, blood_group TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS reports (report_id INTEGER PRIMARY KEY AUTOINCREMENT, patient_id INTEGER, doctor_id INTEGER, raw_text TEXT, upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (patient_id) REFERENCES patients (patient_id), FOREIGN KEY (doctor_id) REFERENCES doctors (doctor_id))''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS vitals (vital_id INTEGER PRIMARY KEY AUTOINCREMENT, report_id INTEGER, blood_pressure TEXT, heart_rate INTEGER, FOREIGN KEY (report_id) REFERENCES reports (report_id))''')
+    
+    # 2. Advanced Feature: Audit Logs Table
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS departments (
-            dept_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            dept_name TEXT NOT NULL
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_type TEXT NOT NULL,
+            table_affected TEXT NOT NULL,
+            record_id INTEGER,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
-    # 2. Doctors Table
+    # 3. Advanced Feature: Database Trigger
+    # This automatically writes to the audit_logs table whenever a report is inserted
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS doctors (
-            doctor_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            dept_id INTEGER,
-            FOREIGN KEY (dept_id) REFERENCES departments (dept_id)
-        )
+        CREATE TRIGGER IF NOT EXISTS log_new_report 
+        AFTER INSERT ON reports
+        BEGIN
+            INSERT INTO audit_logs (action_type, table_affected, record_id) 
+            VALUES ('INSERT', 'reports', NEW.report_id);
+        END;
     ''')
     
-    # 3. Patients Table
+    # 4. Advanced Feature: Database View
+    # This pre-compiles our complex JOIN so the frontend doesn't have to process it
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS patients (
-            patient_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            dob TEXT,
-            blood_group TEXT
-        )
-    ''')
-    
-    # 4. Reports Table (Raw Data)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS reports (
-            report_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            patient_id INTEGER,
-            doctor_id INTEGER,
-            raw_text TEXT,
-            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (patient_id) REFERENCES patients (patient_id),
-            FOREIGN KEY (doctor_id) REFERENCES doctors (doctor_id)
-        )
-    ''')
-    
-    # 5. Vitals Table (Structured Data)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS vitals (
-            vital_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            report_id INTEGER,
-            blood_pressure TEXT,
-            heart_rate INTEGER,
-            FOREIGN KEY (report_id) REFERENCES reports (report_id)
-        )
+        CREATE VIEW IF NOT EXISTS patient_dashboard_view AS
+        SELECT 
+            p.patient_id,
+            p.name AS patient_name,
+            r.upload_date,
+            d.name AS doctor,
+            v.blood_pressure,
+            v.heart_rate,
+            r.raw_text
+        FROM patients p
+        JOIN reports r ON p.patient_id = r.patient_id
+        JOIN doctors d ON r.doctor_id = d.doctor_id
+        JOIN vitals v ON r.report_id = v.report_id;
     ''')
     
     # Seed initial data if empty
@@ -75,16 +70,10 @@ def add_full_report(patient_id, doctor_id, raw_text, bp, hr):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    cursor.execute(
-        "INSERT INTO reports (patient_id, doctor_id, raw_text) VALUES (?, ?, ?)",
-        (patient_id, doctor_id, raw_text)
-    )
+    cursor.execute("INSERT INTO reports (patient_id, doctor_id, raw_text) VALUES (?, ?, ?)", (patient_id, doctor_id, raw_text))
     report_id = cursor.lastrowid
     
-    cursor.execute(
-        "INSERT INTO vitals (report_id, blood_pressure, heart_rate) VALUES (?, ?, ?)",
-        (report_id, bp, hr)
-    )
+    cursor.execute("INSERT INTO vitals (report_id, blood_pressure, heart_rate) VALUES (?, ?, ?)", (report_id, bp, hr))
     
     conn.commit()
     conn.close()
@@ -102,50 +91,37 @@ def get_doctor_data():
     return df
 
 def get_structured_history(patient_id):
-    """JOIN query to pull structured data for the dashboard."""
+    """Now querying the SQL View instead of writing raw JOINs."""
     conn = sqlite3.connect(DB_NAME)
-    query = f"""
-        SELECT r.upload_date, d.name as doctor, v.blood_pressure, v.heart_rate, r.raw_text
-        FROM reports r
-        JOIN doctors d ON r.doctor_id = d.doctor_id
-        JOIN vitals v ON r.report_id = v.report_id
-        WHERE r.patient_id = {patient_id}
-        ORDER BY r.upload_date DESC
-    """
+    query = f"SELECT upload_date, doctor, blood_pressure, heart_rate, raw_text FROM patient_dashboard_view WHERE patient_id = {patient_id} ORDER BY upload_date DESC"
     df = pd.read_sql_query(query, conn)
     conn.close()
     return df
 
 def get_or_create_patient(name):
-    """Finds a patient by name, or creates a new one if they don't exist."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT patient_id FROM patients WHERE name = ?", (name,))
     result = cursor.fetchone()
-    
     if result:
         p_id = result[0]
     else:
         cursor.execute("INSERT INTO patients (name, dob, blood_group) VALUES (?, 'Unknown', 'Unknown')", (name,))
         p_id = cursor.lastrowid
-        
     conn.commit()
     conn.close()
     return p_id
 
 def get_or_create_doctor(name):
-    """Finds a doctor by name, or creates a new one in General Medicine."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT doctor_id FROM doctors WHERE name = ?", (name,))
     result = cursor.fetchone()
-    
     if result:
         d_id = result[0]
     else:
         cursor.execute("INSERT INTO doctors (name, dept_id) VALUES (?, 2)", (name,))
         d_id = cursor.lastrowid
-        
     conn.commit()
     conn.close()
     return d_id
