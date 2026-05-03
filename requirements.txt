@@ -4,4 +4,4 @@ pytesseract
 Pillow
 PyPDF2
 plotly
-spacy==3.7.5
+spacy
