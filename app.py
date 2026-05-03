@@ -72,7 +72,7 @@ if page == "Dashboard":
         st.warning("No patients found in the database.")
 
 elif page == "Upload New Report":
-    st.title("📤 Intelligent Ingestion Pipeline")
+    st.title("📤 Upload New Medical Report")
     
     patients_df = db.get_patient_data()
     doctors_df = db.get_doctor_data()
