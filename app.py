@@ -5,22 +5,21 @@ from PIL import Image
 import PyPDF2
 import re
 import spacy
-import spacy.cli
 import plotly.express as px
 import pandas as pd
 
-# --- BULLETPROOF MODEL LOADING ---
+# --- CLEAN MODEL LOADING ---
+# The Streamlit Cloud server will install the model from requirements.txt during the build.
 @st.cache_resource
 def load_nlp_model():
     try:
         return spacy.load("en_core_web_sm")
     except OSError:
-        st.info("System Initializing: Downloading AI Model... this will only take a moment.")
-        spacy.cli.download("en_core_web_sm")
-        return spacy.load("en_core_web_sm")
+        st.warning("⚠️ AI Model not found. Please ensure the model link is in your requirements.txt.")
+        return None
 
 nlp = load_nlp_model()
-# ---------------------------------
+# ---------------------------
 
 # Initialize the database
 db.init_db()
@@ -110,12 +109,13 @@ elif page == "Upload New Report":
         if uploaded_file is not None and final_patient_name and final_doctor_name:
             with st.spinner('Running AI Extraction Agents...'):
                 
+                # Fetch or create IDs dynamically
                 patient_id = db.get_or_create_patient(final_patient_name.strip())
                 doctor_id = db.get_or_create_doctor(final_doctor_name.strip())
                 
                 extracted_text = ""
                 
-                # 1. OCR Extraction
+                # 1. OCR Extraction (Tesseract for Images, PyPDF2 for PDFs)
                 try:
                     if uploaded_file.type in ["image/png", "image/jpeg", "image/jpg"]:
                         image = Image.open(uploaded_file)
@@ -130,10 +130,11 @@ elif page == "Upload New Report":
                 # 2. Regex Parsing (Numbers)
                 bp_match = re.search(r'(?i)blood pressure.*?(\d{2,3}\s*/\s*\d{2,3})', extracted_text)
                 bp_value = bp_match.group(1) if bp_match else "Not Found"
+                
                 hr_match = re.search(r'(?i)(?:heart rate|pulse).*?(\d{2,3})\s*bpm', extracted_text)
                 hr_value = int(hr_match.group(1)) if hr_match else None
                 
-                # 3. Named Entity Recognition
+                # 3. Named Entity Recognition (Context & Semantics)
                 diseases = []
                 medications = []
                 if nlp and extracted_text:
@@ -144,14 +145,16 @@ elif page == "Upload New Report":
                         elif ent.label_ in ["CHEMICAL", "PRODUCT"]:
                             medications.append(ent.text)
                 
+                # Deduplicate and format the AI lists
                 diseases = list(set([d.title() for d in diseases]))
                 medications = list(set([m.title() for m in medications]))
 
-                # 4. Database Ingestion
+                # 4. Database Ingestion (Commit to SQLite)
                 db.add_full_report(patient_id, doctor_id, extracted_text, bp_value, hr_value)
                 
             st.success(f"Report assigned to **{final_patient_name}** and digitized successfully!")
             
+            # 5. Display Visual Results
             col1, col2 = st.columns(2)
             with col1:
                 st.info(f"**Extracted Blood Pressure:** {bp_value}  \n**Extracted Heart Rate:** {hr_value} bpm")
@@ -163,4 +166,4 @@ elif page == "Upload New Report":
                     if medications:
                         st.write(f"*Medications Detected:* {', '.join(medications)}")
         else:
-            st.error("Please provide a Patient, Doctor, and File.")
+            st.error("Please provide a Patient Name, Doctor Name, and a File.")
